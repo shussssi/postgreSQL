@@ -1,0 +1,55 @@
+import re
+from datetime import datetime, timedelta
+
+def analyze_log_file(file_path):
+    connection_errors = []
+    with open(file_path, 'r') as file:
+        for line in file:
+            if 'connection lost' in line.lower() or 'connection timeout' in line.lower():
+                timestamp = extract_timestamp(line)
+                connection_errors.append(timestamp)
+    
+    return connection_errors
+
+def extract_timestamp(log_line):
+    # ログの形式に応じて正規表現パターンを調整する必要があります
+    pattern = r'\[(.*?)\]'
+    match = re.search(pattern, log_line)
+    if match:
+        return datetime.strptime(match.group(1), '%Y-%m-%d %H:%M:%S')
+    return None
+
+def check_for_anomalies(connection_errors, threshold=5, time_window=timedelta(minutes=30)):
+    anomalies = []
+    for i in range(len(connection_errors)):
+        count = 1
+        for j in range(i+1, len(connection_errors)):
+            if connection_errors[j] - connection_errors[i] <= time_window:
+                count += 1
+            else:
+                break
+        if count >= threshold:
+            anomalies.append((connection_errors[i], count))
+    
+    return anomalies
+
+def main():
+    log_file_path = 'path/to/your/database_log_file.log'
+    connection_errors = analyze_log_file(log_file_path)
+    
+    if not connection_errors:
+        print("接続エラーは見つかりませんでした。")
+        return
+    
+    print(f"合計 {len(connection_errors)} 件の接続エラーが見つかりました。")
+    
+    anomalies = check_for_anomalies(connection_errors)
+    if anomalies:
+        print("以下の時間帯で異常な接続断が検出されました：")
+        for start_time, count in anomalies:
+            print(f"- {start_time}: 30分間に {count} 回の接続エラー")
+    else:
+        print("異常な接続断のパターンは検出されませんでした。")
+
+if __name__ == "__main__":
+    main()
