@@ -1,0 +1,52 @@
+Sub ConsolidateDataWithEmptyA()
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim i As Long
+    Dim cellValue As String
+    Dim firstNonEmptyA As Long
+    
+    'シート"view"を設定
+    Set ws = ThisWorkbook.Worksheets("view")
+    
+    'データがある最終行を取得
+    lastRow = ws.Cells(ws.Rows.Count, "D").End(xlUp).Row
+    
+    'A列で最初に値が入っている行を見つける
+    firstNonEmptyA = 0
+    For i = 1 To lastRow
+        If Not IsEmpty(ws.Cells(i, "A")) Then
+            firstNonEmptyA = i
+            Exit For
+        End If
+    Next i
+    
+    'エラー処理の開始
+    On Error Resume Next
+    
+    'データを下から上に向かってチェック
+    For i = lastRow To firstNonEmptyA + 1 Step -1
+        'D列のセルの値を取得
+        If Not IsEmpty(ws.Cells(i, "D")) Then
+            cellValue = Trim(ws.Cells(i, "D").Value)
+            
+            'A列が空白かチェック
+            If IsEmpty(ws.Cells(i, "A")) Or Trim(ws.Cells(i, "A").Value) = "" Then
+                'すでに上のセルにデータがある場合はスペースを追加して追記
+                If Not IsEmpty(ws.Cells(firstNonEmptyA, "D")) Then
+                    ws.Cells(firstNonEmptyA, "D").Value = Trim(ws.Cells(firstNonEmptyA, "D").Value) & " " & cellValue
+                Else
+                    '上のセルが空の場合はそのまま移動
+                    ws.Cells(firstNonEmptyA, "D").Value = cellValue
+                End If
+                
+                '行を削除
+                ws.Rows(i).Delete Shift:=xlUp
+            End If
+        End If
+    Next i
+    
+    'エラー処理の終了
+    On Error GoTo 0
+    
+    MsgBox "データの集約が完了しました。", vbInformation
+End Sub
