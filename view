@@ -1,0 +1,40 @@
+Sub ConsolidateData()
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim i As Long
+    
+    'シート"view"を設定
+    Set ws = ThisWorkbook.Worksheets("view")
+    
+    'データがある最終行を取得
+    lastRow = ws.Cells(ws.Rows.Count, "D").End(xlUp).Row
+    
+    'データを下から上に向かってチェック
+    For i = lastRow To 2 Step -1
+        '上の行のインデックス
+        Dim prevRow As Long
+        prevRow = i - 1
+        
+        'A,B,C列が空かチェック
+        If IsEmpty(ws.Cells(i, "A")) And _
+           IsEmpty(ws.Cells(i, "B")) And _
+           IsEmpty(ws.Cells(i, "C")) Then
+            
+            'D列のデータがある場合
+            If Not IsEmpty(ws.Cells(i, "D")) Then
+                'すでに上のセルにデータがある場合は改行して追記
+                If Not IsEmpty(ws.Cells(prevRow, "D")) Then
+                    ws.Cells(prevRow, "D").Value = ws.Cells(prevRow, "D").Value & vbNewLine & ws.Cells(i, "D").Value
+                Else
+                    '上のセルが空の場合はそのまま移動
+                    ws.Cells(prevRow, "D").Value = ws.Cells(i, "D").Value
+                End If
+                
+                '現在の行を削除
+                ws.Rows(i).Delete Shift:=xlUp
+            End If
+        End If
+    Next i
+    
+    MsgBox "データの集約が完了しました。", vbInformation
+End Sub
