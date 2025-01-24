@@ -1,0 +1,88 @@
+\set ON_ERROR_STOP on
+
+-------------------------------------------------------------------------------
+-- 1. 事前にメッセージを出力 (psqlのメタコマンド \echo ではなく、SQL SELECTで出力)
+-------------------------------------------------------------------------------
+SELECT '====================================================' AS info
+UNION ALL
+SELECT '[INFO] ユーザー定義トリガー スモークテスト開始'
+UNION ALL
+SELECT '  - INSERT / UPDATE / DELETE を試してトリガー発火を確認'
+UNION ALL
+SELECT '  - ただしサブトランザクションで ROLLBACK するため'
+UNION ALL
+SELECT '    実際のデータは変更されません。'
+UNION ALL
+SELECT '====================================================';
+
+-------------------------------------------------------------------------------
+-- 2. PL/pgSQL の DO ブロックでトリガーチェック
+--    - pg_trigger + pg_class + pg_namespace からユーザー定義トリガーを列挙
+--    - システムトリガー (tgname LIKE 'pg_%') は除外
+--    - トリガー先テーブルが (r=通常テーブル, p=パーティション, f=外部テーブル)
+--    - 操作はサブトランザクション(SAVEPOINT)を使って試し、ROLLBACK TO SAVEPOINT で巻き戻す
+-------------------------------------------------------------------------------
+DO $$
+DECLARE
+    rec record;
+    tbl_fullname text;
+    v_sql text;
+BEGIN
+    FOR rec IN
+        SELECT t.tgname,
+               t.tgrelid,
+               c.relname,
+               n.nspname
+          FROM pg_trigger t
+          JOIN pg_class c ON t.tgrelid = c.oid
+          JOIN pg_namespace n ON c.relnamespace = n.oid
+         WHERE c.relkind IN ('r','p','f')              -- 通常テーブル / パーティション / 外部テーブル
+           AND n.nspname NOT IN ('pg_catalog','information_schema')
+           AND t.tgname NOT LIKE 'pg_%'                -- システムトリガー除外
+         ORDER BY n.nspname, c.relname, t.tgname
+    LOOP
+        -- スキーマ名.テーブル名
+        tbl_fullname := format('%I.%I', rec.nspname, rec.relname);
+
+        RAISE NOTICE '---------------------------------------------------';
+        RAISE NOTICE 'Trigger found: %.% => %', rec.nspname, rec.relname, rec.tgname;
+
+        /*
+          簡易テスト:
+            1) INSERT ... DEFAULT VALUES
+            2) UPDATE ... LIMIT 1  (xmin=xmin はダミー更新)
+            3) DELETE ... LIMIT 1
+          を実行するが、SAVEPOINT -> ROLLBACK TO でロールバックし、
+          実際のデータは変更しない。
+          
+          テーブルにNOT NULL列やCHECK制約がある場合は
+          INSERT ... DEFAULT VALUES が失敗する場合がある。
+          その場合は "現状のテーブル構造では最小限の操作でも通らない" と認識できる。
+        */
+        v_sql := format($$
+          SAVEPOINT sp_trigger_test;
+          
+          INSERT INTO %s DEFAULT VALUES;
+          UPDATE %s SET xmin = xmin LIMIT 1;
+          DELETE FROM %s WHERE true LIMIT 1;
+          
+          ROLLBACK TO sp_trigger_test;
+        $$, tbl_fullname, tbl_fullname, tbl_fullname);
+
+        RAISE NOTICE 'Exec commands on %.%: %', rec.nspname, rec.relname, v_sql;
+
+        BEGIN
+            EXECUTE v_sql;
+            RAISE NOTICE 'Trigger test on %.% => % completed without error', 
+                         rec.nspname, rec.relname, rec.tgname;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'Error testing trigger on %.% => % : %',
+                         rec.nspname, rec.relname, rec.tgname, SQLERRM;
+        END;
+    END LOOP;
+
+    RAISE NOTICE '====================================================';
+    RAISE NOTICE '[INFO] トリガースモークテスト終了';
+    RAISE NOTICE '====================================================';
+END
+$$;
