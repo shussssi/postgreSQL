@@ -1,0 +1,310 @@
+Sub テーブル別キャッシュフィット率分析()
+    ' テーブル別にキャッシュフィット率データを分類し、新しいシートに結果を出力するマクロ
+    
+    Dim ws As Worksheet
+    Dim wsResult As Worksheet
+    Dim lastRow As Long
+    Dim tableNames As Object
+    Dim tableName As Variant
+    Dim i As Long
+    Dim resultRow As Long
+    Dim timeData As String
+    Dim cacheRate As Double
+    
+    ' 元のデータがあるシートを設定
+    Set ws = ActiveSheet
+    
+    ' テーブル名をユニークに収集するためのDictionaryを作成
+    Set tableNames = CreateObject("Scripting.Dictionary")
+    
+    ' データの最終行を取得
+    lastRow = ws.Cells(ws.Rows.Count, "B").End(xlUp).Row
+    
+    ' すべてのテーブル名を収集
+    For i = 2 To lastRow ' ヘッダー行をスキップ
+        tableName = ws.Cells(i, 2).Value ' B列のテーブル名
+        If Not tableNames.exists(tableName) Then
+            tableNames.Add tableName, 0
+        End If
+    Next i
+    
+    ' 結果出力用の新しいシートを作成
+    On Error Resume Next
+    Application.DisplayAlerts = False
+    Sheets("テーブル別分析").Delete
+    Application.DisplayAlerts = True
+    On Error GoTo 0
+    
+    Set wsResult = Sheets.Add
+    wsResult.Name = "テーブル別分析"
+    
+    ' 結果シートのヘッダーを設定
+    With wsResult
+        .Cells(1, 1).Value = "テーブル名"
+        .Cells(1, 2).Value = "時間"
+        .Cells(1, 3).Value = "キャッシュフィット率"
+        .Cells(1, 4).Value = "平均"
+        .Cells(1, 5).Value = "最大"
+        .Cells(1, 6).Value = "最小"
+        .Cells(1, 7).Value = "変動幅"
+        
+        ' ヘッダー行の書式設定
+        .Range("A1:G1").Font.Bold = True
+        .Range("A1:G1").Interior.Color = RGB(200, 200, 200)
+    End With
+    
+    resultRow = 2 ' データ開始行
+    
+    ' 各テーブル名ごとにデータを収集して結果シートに出力
+    For Each tableName In tableNames.keys
+        Dim tableData() As Double
+        Dim dataCount As Integer
+        Dim avgRate As Double
+        Dim maxRate As Double
+        Dim minRate As Double
+        Dim rateRange As Double
+        
+        ' 配列サイズの初期化（最大でlastRow-1）
+        ReDim tableData(1 To lastRow - 1)
+        dataCount = 0
+        
+        ' 現在のテーブルのデータを収集
+        For i = 2 To lastRow
+            If ws.Cells(i, 2).Value = tableName Then
+                timeData = ws.Cells(i, 1).Value ' A列の時間
+                cacheRate = ws.Cells(i, 5).Value ' E列のキャッシュフィット率
+                
+                ' 結果シートにデータ行を追加
+                wsResult.Cells(resultRow, 1).Value = tableName
+                wsResult.Cells(resultRow, 2).Value = timeData
+                wsResult.Cells(resultRow, 3).Value = cacheRate
+                
+                ' 統計計算用の配列にデータを追加
+                dataCount = dataCount + 1
+                tableData(dataCount) = cacheRate
+                
+                resultRow = resultRow + 1
+            End If
+        Next i
+        
+        ' 配列のサイズを実際のデータ数に調整
+        ReDim Preserve tableData(1 To dataCount)
+        
+        ' 統計情報の計算
+        If dataCount > 0 Then
+            ' 平均値
+            avgRate = Application.WorksheetFunction.Average(tableData)
+            ' 最大値
+            maxRate = Application.WorksheetFunction.Max(tableData)
+            ' 最小値
+            minRate = Application.WorksheetFunction.Min(tableData)
+            ' 変動幅（最大 - 最小）
+            rateRange = maxRate - minRate
+            
+            ' テーブルごとの統計情報を追加（各テーブルの最後の行に追加）
+            wsResult.Cells(resultRow - 1, 4).Value = avgRate
+            wsResult.Cells(resultRow - 1, 5).Value = maxRate
+            wsResult.Cells(resultRow - 1, 6).Value = minRate
+            wsResult.Cells(resultRow - 1, 7).Value = rateRange
+            
+            ' 統計情報に罫線と色を付ける
+            wsResult.Range(wsResult.Cells(resultRow - dataCount, 1), wsResult.Cells(resultRow - 1, 7)).Borders.LineStyle = xlContinuous
+            wsResult.Range(wsResult.Cells(resultRow - 1, 4), wsResult.Cells(resultRow - 1, 7)).Interior.Color = RGB(220, 230, 240)
+        End If
+        
+        ' テーブル間の区切り行を追加
+        wsResult.Cells(resultRow, 1).Value = "---"
+        resultRow = resultRow + 1
+    Next tableName
+    
+    ' 列幅の自動調整
+    wsResult.Columns("A:G").AutoFit
+    
+    ' テーブル別グラフの作成
+    Call 作成テーブル別グラフ(wsResult, tableNames)
+    
+    MsgBox "テーブルごとのキャッシュフィット率分析が完了しました。", vbInformation
+End Sub
+
+Sub 作成テーブル別グラフ(wsResult As Worksheet, tableNames As Object)
+    ' テーブルごとのキャッシュフィット率グラフを作成するサブルーチン
+    
+    Dim chartSheet As Worksheet
+    Dim chrt As Chart
+    Dim tableName As Variant
+    Dim dataRange As Range
+    Dim startRow As Long
+    Dim endRow As Long
+    Dim currRow As Long
+    Dim lastRow As Long
+    
+    ' グラフ用のシートを作成
+    On Error Resume Next
+    Application.DisplayAlerts = False
+    Sheets("キャッシュフィット率グラフ").Delete
+    Application.DisplayAlerts = True
+    On Error GoTo 0
+    
+    Set chartSheet = Sheets.Add
+    chartSheet.Name = "キャッシュフィット率グラフ"
+    
+    lastRow = wsResult.Cells(wsResult.Rows.Count, "A").End(xlUp).Row
+    currRow = 2 ' データの開始行
+    
+    ' 各テーブルごとにグラフを作成
+    For Each tableName In tableNames.keys
+        startRow = currRow
+        
+        ' 現在のテーブルのデータ範囲の終わりを見つける
+        Do While currRow <= lastRow
+            If wsResult.Cells(currRow, 1).Value = "---" Then
+                Exit Do
+            End If
+            currRow = currRow + 1
+        Loop
+        
+        endRow = currRow - 1
+        
+        ' このテーブルのデータが存在する場合
+        If endRow >= startRow Then
+            ' グラフオブジェクトを作成
+            Set chrt = chartSheet.Shapes.AddChart2(201, xlLine).Chart
+            
+            ' グラフのデータ範囲を設定
+            chrt.SetSourceData Source:=wsResult.Range(wsResult.Cells(startRow, 2), wsResult.Cells(endRow, 3))
+            
+            ' グラフのタイトルを設定
+            chrt.ChartTitle.Text = "テーブル: " & tableName & " のキャッシュフィット率"
+            
+            ' グラフの位置とサイズを調整
+            With chrt.Parent
+                .Left = 50
+                .Top = (tableNames.keys.Count - tableNames.keys.IndexOf(tableName) - 1) * 250 + 50
+                .Width = 500
+                .Height = 200
+            End With
+            
+            ' X軸のタイトル
+            chrt.Axes(xlCategory).AxisTitle.Text = "時間"
+            
+            ' Y軸のタイトル
+            chrt.Axes(xlValue).AxisTitle.Text = "キャッシュフィット率"
+            
+            ' Y軸の範囲を0-100に設定（キャッシュフィット率が百分率の場合）
+            chrt.Axes(xlValue).MinimumScale = 0
+            chrt.Axes(xlValue).MaximumScale = 100
+            
+            ' グラフの凡例を削除
+            chrt.HasLegend = False
+            
+            ' データの線の色と太さを設定
+            chrt.FullSeriesCollection(1).Format.Line.ForeColor.RGB = RGB(0, 112, 192)
+            chrt.FullSeriesCollection(1).Format.Line.Weight = 2
+        End If
+        
+        ' 次のテーブルのデータの開始行に移動
+        currRow = currRow + 1
+    Next tableName
+    
+    ' サマリーグラフも作成（すべてのテーブルを比較）
+    Call 作成サマリーグラフ(wsResult, tableNames, chartSheet)
+End Sub
+
+Sub 作成サマリーグラフ(wsResult As Worksheet, tableNames As Object, chartSheet As Worksheet)
+    ' すべてのテーブルを比較するサマリーグラフを作成するサブルーチン
+    
+    Dim chrt As Chart
+    Dim tableName As Variant
+    Dim startRow As Long
+    Dim endRow As Long
+    Dim currRow As Long
+    Dim lastRow As Long
+    Dim seriesIndex As Integer
+    Dim colorIndex As Integer
+    
+    ' サマリーグラフのタイトル
+    Dim summaryTitle As String
+    summaryTitle = "テーブル別キャッシュフィット率比較"
+    
+    ' グラフオブジェクトを作成
+    Set chrt = chartSheet.Shapes.AddChart2(201, xlLine).Chart
+    
+    lastRow = wsResult.Cells(wsResult.Rows.Count, "A").End(xlUp).Row
+    currRow = 2 ' データの開始行
+    seriesIndex = 1 ' 系列番号
+    
+    ' 各テーブルのデータを系列として追加
+    For Each tableName In tableNames.keys
+        startRow = currRow
+        
+        ' 現在のテーブルのデータ範囲の終わりを見つける
+        Do While currRow <= lastRow
+            If wsResult.Cells(currRow, 1).Value = "---" Then
+                Exit Do
+            End If
+            currRow = currRow + 1
+        Loop
+        
+        endRow = currRow - 1
+        
+        ' このテーブルのデータが存在する場合
+        If endRow >= startRow Then
+            ' 最初の系列の場合はSetSourceDataを使用
+            If seriesIndex = 1 Then
+                chrt.SetSourceData Source:=wsResult.Range(wsResult.Cells(startRow, 2), wsResult.Cells(endRow, 3))
+                chrt.FullSeriesCollection(1).Name = tableName
+            Else
+                ' 2つ目以降の系列はSeriesCollectionのAddメソッドを使用
+                chrt.SeriesCollection.Add Source:=wsResult.Range(wsResult.Cells(startRow, 3), wsResult.Cells(endRow, 3)), _
+                    Rowcol:=xlColumns, SeriesLabels:=False, CategoryLabels:=False, Replace:=False
+                chrt.FullSeriesCollection(seriesIndex).Name = tableName
+                
+                ' X軸の値を設定（時間データ）
+                chrt.FullSeriesCollection(seriesIndex).XValues = wsResult.Range(wsResult.Cells(startRow, 2), wsResult.Cells(endRow, 2))
+            End If
+            
+            ' 系列の色を変える（テーブルごとに異なる色）
+            colorIndex = ((seriesIndex - 1) Mod 8) + 1 ' 8色を循環使用
+            Select Case colorIndex
+                Case 1: chrt.FullSeriesCollection(seriesIndex).Format.Line.ForeColor.RGB = RGB(0, 112, 192)  ' 青
+                Case 2: chrt.FullSeriesCollection(seriesIndex).Format.Line.ForeColor.RGB = RGB(255, 0, 0)    ' 赤
+                Case 3: chrt.FullSeriesCollection(seriesIndex).Format.Line.ForeColor.RGB = RGB(0, 176, 80)   ' 緑
+                Case 4: chrt.FullSeriesCollection(seriesIndex).Format.Line.ForeColor.RGB = RGB(255, 192, 0)  ' オレンジ
+                Case 5: chrt.FullSeriesCollection(seriesIndex).Format.Line.ForeColor.RGB = RGB(112, 48, 160) ' 紫
+                Case 6: chrt.FullSeriesCollection(seriesIndex).Format.Line.ForeColor.RGB = RGB(0, 176, 240)  ' 水色
+                Case 7: chrt.FullSeriesCollection(seriesIndex).Format.Line.ForeColor.RGB = RGB(146, 208, 80) ' 黄緑
+                Case 8: chrt.FullSeriesCollection(seriesIndex).Format.Line.ForeColor.RGB = RGB(192, 0, 0)    ' 暗赤
+            End Select
+            
+            seriesIndex = seriesIndex + 1
+        End If
+        
+        ' 次のテーブルのデータの開始行に移動
+        currRow = currRow + 1
+    Next tableName
+    
+    ' グラフのタイトルを設定
+    chrt.ChartTitle.Text = summaryTitle
+    
+    ' グラフの位置とサイズを調整
+    With chrt.Parent
+        .Left = 50
+        .Top = 50
+        .Width = 700
+        .Height = 400
+    End With
+    
+    ' X軸のタイトル
+    chrt.Axes(xlCategory).AxisTitle.Text = "時間"
+    
+    ' Y軸のタイトル
+    chrt.Axes(xlValue).AxisTitle.Text = "キャッシュフィット率"
+    
+    ' Y軸の範囲を0-100に設定（キャッシュフィット率が百分率の場合）
+    chrt.Axes(xlValue).MinimumScale = 0
+    chrt.Axes(xlValue).MaximumScale = 100
+    
+    ' グラフの凡例を表示
+    chrt.HasLegend = True
+    chrt.Legend.Position = xlLegendPositionBottom
+End Sub
