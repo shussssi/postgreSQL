@@ -1,0 +1,103 @@
+Sub テーブルキャッシュ分析()
+    ' テーブルごとにキャッシュフィット率の最大値、最小値、差分を計算するマクロ
+    ' A列：時間、B列：テーブル名、E列：キャッシュフィット率
+    
+    Application.ScreenUpdating = False  ' 画面更新を停止して処理を高速化
+    
+    Dim ws As Worksheet
+    Dim wsResult As Worksheet
+    Dim lastRow As Long, i As Long, resultRow As Long
+    Dim tableNames As Object
+    Set tableNames = CreateObject("Scripting.Dictionary")
+    
+    ' 現在のワークシートを取得
+    Set ws = ActiveSheet
+    
+    ' 最終行を取得
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    ' 結果用の新しいワークシートを作成
+    On Error Resume Next
+    Set wsResult = Worksheets("分析結果")
+    If wsResult Is Nothing Then
+        Set wsResult = Worksheets.Add(After:=Worksheets(Worksheets.Count))
+        wsResult.Name = "分析結果"
+    Else
+        wsResult.Cells.Clear
+    End If
+    On Error GoTo 0
+    
+    ' 結果シートのヘッダーを設定
+    wsResult.Range("A1").Value = "テーブル名"
+    wsResult.Range("B1").Value = "最小キャッシュフィット率"
+    wsResult.Range("C1").Value = "最大キャッシュフィット率"
+    wsResult.Range("D1").Value = "変動幅（最大-最小）"
+    
+    ' ヘッダー行を太字に設定
+    wsResult.Range("A1:D1").Font.Bold = True
+    
+    ' 各テーブル名ごとにデータを収集
+    For i = 2 To lastRow
+        Dim tableName As String
+        Dim cacheRate As Double
+        
+        tableName = ws.Cells(i, "B").Value
+        If IsNumeric(ws.Cells(i, "E").Value) Then
+            cacheRate = CDbl(ws.Cells(i, "E").Value)
+            
+            ' テーブル名がまだディクショナリにない場合は追加
+            If Not tableNames.Exists(tableName) Then
+                Dim newData(1) As Variant
+                ' 0: 最小値, 1: 最大値
+                newData(0) = cacheRate ' 最小値
+                newData(1) = cacheRate ' 最大値
+                tableNames.Add tableName, newData
+            Else
+                ' 既存のデータを更新
+                Dim existingData As Variant
+                existingData = tableNames(tableName)
+                
+                ' 最小値を更新
+                If cacheRate < existingData(0) Then
+                    existingData(0) = cacheRate
+                End If
+                
+                ' 最大値を更新
+                If cacheRate > existingData(1) Then
+                    existingData(1) = cacheRate
+                End If
+                
+                tableNames(tableName) = existingData
+            End If
+        End If
+    Next i
+    
+    ' 結果をワークシートに出力
+    resultRow = 2
+    Dim key As Variant
+    
+    For Each key In tableNames.Keys
+        Dim data As Variant
+        data = tableNames(key)
+        
+        wsResult.Cells(resultRow, "A").Value = key ' テーブル名
+        wsResult.Cells(resultRow, "B").Value = data(0) ' 最小値
+        wsResult.Cells(resultRow, "C").Value = data(1) ' 最大値
+        wsResult.Cells(resultRow, "D").Value = data(1) - data(0) ' 変動幅（最大-最小）
+        
+        resultRow = resultRow + 1
+    Next key
+    
+    ' 列幅を自動調整
+    wsResult.Columns("A:D").AutoFit
+    
+    ' キャッシュフィット率にパーセント形式を適用
+    With wsResult.Range("B2:D" & resultRow - 1)
+        .NumberFormat = "0.00%"
+    End With
+    
+    Application.ScreenUpdating = True  ' 画面更新を再開
+    
+    MsgBox "テーブル別キャッシュフィット率の分析が完了しました。", vbInformation, "処理完了"
+    
+End Sub
