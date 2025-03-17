@@ -1,0 +1,279 @@
+Sub 整理テーブルキャッシュデータ()
+    ' テーブルキャッシュデータを整理するマクロ
+    ' A列：時間、B列：テーブル名、E列：キャッシュフィット率のデータを処理
+    
+    Application.ScreenUpdating = False  ' 画面更新を停止して処理を高速化
+    
+    Dim ws As Worksheet
+    Dim wsResult As Worksheet
+    Dim lastRow As Long, i As Long, resultRow As Long
+    Dim tableNames As Object
+    Set tableNames = CreateObject("Scripting.Dictionary")
+    
+    ' 現在のワークシートを取得
+    Set ws = ActiveSheet
+    
+    ' 最終行を取得
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    ' 結果用の新しいワークシートを作成
+    On Error Resume Next
+    Set wsResult = Worksheets("分析結果")
+    If wsResult Is Nothing Then
+        Set wsResult = Worksheets.Add(After:=Worksheets(Worksheets.Count))
+        wsResult.Name = "分析結果"
+    Else
+        wsResult.Cells.Clear
+    End If
+    On Error GoTo 0
+    
+    ' 結果シートのヘッダーを設定
+    wsResult.Range("A1").Value = "テーブル名"
+    wsResult.Range("B1").Value = "最小キャッシュフィット率"
+    wsResult.Range("C1").Value = "最大キャッシュフィット率"
+    wsResult.Range("D1").Value = "変動幅"
+    wsResult.Range("E1").Value = "平均キャッシュフィット率"
+    wsResult.Range("F1").Value = "データポイント数"
+    wsResult.Range("G1").Value = "最終更新時間"
+    
+    ' ヘッダー行を太字に設定
+    wsResult.Range("A1:G1").Font.Bold = True
+    
+    ' 各テーブル名ごとにデータを収集
+    For i = 2 To lastRow
+        Dim tableName As String
+        Dim cacheRate As Double
+        Dim timeStamp As String
+        
+        tableName = ws.Cells(i, "B").Value
+        If IsNumeric(ws.Cells(i, "E").Value) Then
+            cacheRate = CDbl(ws.Cells(i, "E").Value)
+            timeStamp = ws.Cells(i, "A").Value
+            
+            ' テーブル名がまだディクショナリにない場合は追加
+            If Not tableNames.Exists(tableName) Then
+                Dim newData(5) As Variant
+                ' 0: 最小値, 1: 最大値, 2: データポイント数, 3: 合計（平均計算用）, 4: 最終更新時間
+                newData(0) = cacheRate ' 最小値
+                newData(1) = cacheRate ' 最大値
+                newData(2) = 1 ' カウント
+                newData(3) = cacheRate ' 合計
+                newData(4) = timeStamp ' 最終更新時間
+                tableNames.Add tableName, newData
+            Else
+                ' 既存のデータを更新
+                Dim existingData As Variant
+                existingData = tableNames(tableName)
+                
+                ' 最小値を更新
+                If cacheRate < existingData(0) Then
+                    existingData(0) = cacheRate
+                End If
+                
+                ' 最大値を更新
+                If cacheRate > existingData(1) Then
+                    existingData(1) = cacheRate
+                End If
+                
+                ' カウントを増やす
+                existingData(2) = existingData(2) + 1
+                
+                ' 合計に追加（平均計算用）
+                existingData(3) = existingData(3) + cacheRate
+                
+                ' 最終更新時間を更新（時間形式が昇順であると仮定）
+                existingData(4) = timeStamp
+                
+                tableNames(tableName) = existingData
+            End If
+        End If
+    Next i
+    
+    ' 結果をワークシートに出力
+    resultRow = 2
+    Dim key As Variant
+    
+    ' 変動幅の大きい順にソートするための一時配列
+    Dim sortArray() As Variant
+    ReDim sortArray(tableNames.Count - 1, 2) ' 0: テーブル名, 1: 変動幅, 2: オリジナルインデックス
+    
+    i = 0
+    For Each key In tableNames.Keys
+        Dim data As Variant
+        data = tableNames(key)
+        
+        ' 変動幅を計算
+        Dim variation As Double
+        variation = data(1) - data(0) ' 最大値 - 最小値
+        
+        sortArray(i, 0) = key
+        sortArray(i, 1) = variation
+        sortArray(i, 2) = i
+        i = i + 1
+    Next key
+    
+    ' 変動幅（降順）でソート
+    Call QuickSortVariation(sortArray, 0, UBound(sortArray, 1))
+    
+    ' ソートされた順に結果を出力
+    For i = 0 To UBound(sortArray, 1)
+        key = sortArray(i, 0)
+        data = tableNames(key)
+        
+        wsResult.Cells(resultRow, "A").Value = key ' テーブル名
+        wsResult.Cells(resultRow, "B").Value = data(0) ' 最小値
+        wsResult.Cells(resultRow, "C").Value = data(1) ' 最大値
+        wsResult.Cells(resultRow, "D").Value = data(1) - data(0) ' 変動幅
+        wsResult.Cells(resultRow, "E").Value = data(3) / data(2) ' 平均値
+        wsResult.Cells(resultRow, "F").Value = data(2) ' データポイント数
+        wsResult.Cells(resultRow, "G").Value = data(4) ' 最終更新時間
+        
+        resultRow = resultRow + 1
+    Next i
+    
+    ' 列幅を自動調整
+    wsResult.Columns("A:G").AutoFit
+    
+    ' 結果に書式設定を適用
+    With wsResult.Range("B2:E" & resultRow - 1)
+        .NumberFormat = "0.00%"
+    End With
+    
+    ' キャッシュフィット率の変動が大きいテーブルを強調表示
+    Dim rng As Range
+    Set rng = wsResult.Range("D2:D" & resultRow - 1)
+    Call 条件付き書式設定(rng)
+    
+    ' 各テーブルの詳細分析シートを作成
+    Call テーブル別詳細分析(ws, wsResult, lastRow)
+    
+    Application.ScreenUpdating = True  ' 画面更新を再開
+    
+    MsgBox "データの整理と分類が完了しました。" & vbCrLf & _
+           "「分析結果」シートにキャッシュフィット率の変動が大きい順にテーブルを表示しています。", _
+           vbInformation, "処理完了"
+    
+End Sub
+
+' クイックソートアルゴリズム（変動幅の降順）
+Sub QuickSortVariation(arr As Variant, low As Long, high As Long)
+    Dim pivot As Double
+    Dim tmp As Variant
+    Dim i As Long, j As Long
+    
+    If low < high Then
+        pivot = arr((low + high) \ 2, 1)
+        i = low
+        j = high
+        
+        Do
+            Do While arr(i, 1) > pivot ' 降順ソート
+                i = i + 1
+            Loop
+            
+            Do While arr(j, 1) < pivot ' 降順ソート
+                j = j - 1
+            Loop
+            
+            If i <= j Then
+                ' テーブル名を交換
+                tmp = arr(i, 0)
+                arr(i, 0) = arr(j, 0)
+                arr(j, 0) = tmp
+                
+                ' 変動幅を交換
+                tmp = arr(i, 1)
+                arr(i, 1) = arr(j, 1)
+                arr(j, 1) = tmp
+                
+                ' インデックスを交換
+                tmp = arr(i, 2)
+                arr(i, 2) = arr(j, 2)
+                arr(j, 2) = tmp
+                
+                i = i + 1
+                j = j - 1
+            End If
+        Loop Until i > j
+        
+        If low < j Then Call QuickSortVariation(arr, low, j)
+        If i < high Then Call QuickSortVariation(arr, i, high)
+    End If
+End Sub
+
+' 条件付き書式設定を適用
+Sub 条件付き書式設定(rng As Range)
+    rng.FormatConditions.Delete
+    
+    ' 変動幅が大きい上位25%を赤色で強調
+    Dim fc1 As FormatCondition
+    Set fc1 = rng.FormatConditions.Add(Type:=xlConditionalFormatTop10, Operator:=xlTop10Percent, Rank:=25)
+    With fc1
+        .Interior.Color = RGB(255, 200, 200)
+    End With
+    
+    ' 変動幅が中程度の25%～75%を黄色で表示
+    Dim fc2 As FormatCondition
+    Set fc2 = rng.FormatConditions.Add(Type:=xlConditionalFormatTop10, Operator:=xlTop10Percent, Rank:=75)
+    With fc2
+        .Interior.Color = RGB(255, 255, 200)
+    End With
+End Sub
+
+' 各テーブルごとの詳細分析シートを作成
+Sub テーブル別詳細分析(ws As Worksheet, wsResult As Worksheet, lastRow As Long)
+    Dim tableList As Range
+    Dim tableCount As Long
+    Dim i As Long, j As Long
+    Dim tableName As String
+    Dim wsDetail As Worksheet
+    
+    ' 分析結果シートからテーブル一覧を取得
+    tableCount = wsResult.Cells(wsResult.Rows.Count, "A").End(xlUp).Row - 1 ' ヘッダー行を除く
+    
+    ' 詳細分析用のシートを作成
+    On Error Resume Next
+    Set wsDetail = Worksheets("テーブル詳細")
+    If wsDetail Is Nothing Then
+        Set wsDetail = Worksheets.Add(After:=wsResult)
+        wsDetail.Name = "テーブル詳細"
+    Else
+        wsDetail.Cells.Clear
+    End If
+    On Error GoTo 0
+    
+    ' ヘッダー設定
+    wsDetail.Range("A1").Value = "テーブル名"
+    wsDetail.Range("B1").Value = "時間"
+    wsDetail.Range("C1").Value = "キャッシュフィット率"
+    wsDetail.Range("A1:C1").Font.Bold = True
+    
+    Dim detailRow As Long
+    detailRow = 2
+    
+    ' 分析結果シートの各テーブルについて詳細データを抽出
+    For i = 2 To tableCount + 1 ' ヘッダー行の次から
+        tableName = wsResult.Cells(i, "A").Value
+        
+        ' 元のデータシートからこのテーブルのデータを抽出
+        For j = 2 To lastRow
+            If ws.Cells(j, "B").Value = tableName Then
+                wsDetail.Cells(detailRow, "A").Value = tableName
+                wsDetail.Cells(detailRow, "B").Value = ws.Cells(j, "A").Value ' 時間
+                If IsNumeric(ws.Cells(j, "E").Value) Then
+                    wsDetail.Cells(detailRow, "C").Value = CDbl(ws.Cells(j, "E").Value) ' キャッシュフィット率
+                End If
+                detailRow = detailRow + 1
+            End If
+        Next j
+        
+        ' テーブル間に空行を入れる
+        detailRow = detailRow + 1
+    Next i
+    
+    ' 列幅を自動調整
+    wsDetail.Columns("A:C").AutoFit
+    
+    ' キャッシュフィット率にパーセント形式を適用
+    wsDetail.Range("C2:C" & detailRow).NumberFormat = "0.00%"
+End Sub
